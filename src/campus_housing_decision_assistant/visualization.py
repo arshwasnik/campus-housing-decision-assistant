@@ -50,12 +50,21 @@ def plot_score_breakdown(df: pd.DataFrame, output_path: Path | str, top_n: int =
     """Grouped bar chart comparing score components for the best listings."""
     score_columns = [
         "affordability_score",
-        "commute_score",
-        "comfort_score",
+        "commute_convenience_score",
+        "space_value_score",
         "amenity_score",
-        "hidden_cost_risk_score",
+        "safety_score",
+        "hidden_cost_score",
     ]
-    top_df = df.head(top_n).set_index("property_name")[score_columns]
+    legend_labels = {
+        "affordability_score": "Affordability",
+        "commute_convenience_score": "Commute",
+        "space_value_score": "Space/Value",
+        "amenity_score": "Amenities",
+        "safety_score": "Safety",
+        "hidden_cost_score": "Low Hidden Cost Risk",
+    }
+    top_df = df.head(top_n).set_index("property_name")[score_columns].rename(columns=legend_labels)
 
     figure, axis = plt.subplots(figsize=(12, 7))
     top_df.plot(kind="bar", ax=axis)

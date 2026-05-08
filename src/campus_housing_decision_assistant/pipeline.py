@@ -1,12 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
 
 import numpy as np
 import pandas as pd
-
-from .config import AMENITY_KEYWORDS, HIDDEN_COST_KEYWORDS
 
 
 NUMERIC_COLUMNS = [
@@ -16,10 +14,54 @@ NUMERIC_COLUMNS = [
     "square_feet",
     "latitude",
     "longitude",
+    "distance_to_campus_miles",
+    "commute_time_minutes",
+    "safety_rating",
+    "walkability_score",
+    "lease_length_months",
+    "hidden_fees_estimate",
+]
+
+
+BOOLEAN_COLUMNS = [
+    "parking_included",
+    "laundry_included",
+    "utilities_included",
+    "furnished",
+    "pet_friendly",
 ]
 
 
 TEXT_COLUMNS = ["city", "state", "description"]
+
+
+COLUMN_ALIASES = {
+    "square_footage": "square_feet",
+    "distance_to_campus": "distance_to_campus_miles",
+    "distance_to_campus_mi": "distance_to_campus_miles",
+    "commute_time": "commute_time_minutes",
+    "commute_minutes": "commute_time_minutes",
+    "parking_included_": "parking_included",
+    "laundry_included_": "laundry_included",
+    "utilities_included_": "utilities_included",
+    "lease_length": "lease_length_months",
+    "lease_length_month": "lease_length_months",
+    "hidden_fees": "hidden_fees_estimate",
+    "hidden_fee_estimate": "hidden_fees_estimate",
+}
+
+
+AMENITY_LABELS = {
+    "parking_included": "parking",
+    "laundry_included": "laundry",
+    "utilities_included": "utilities",
+    "furnished": "furnished",
+    "pet_friendly": "pet friendly",
+}
+
+
+TRUE_VALUES = {"true", "yes", "y", "1", "included", "free", "covered", "available"}
+FALSE_VALUES = {"false", "no", "n", "0", "not included", "none", "street", "paid", "extra"}
 
 
 def load_apartment_data(csv_path: Path | str) -> pd.DataFrame:
@@ -27,55 +69,117 @@ def load_apartment_data(csv_path: Path | str) -> pd.DataFrame:
     return pd.read_csv(csv_path)
 
 
+def normalize_column_name(column_name: str) -> str:
+    """Convert column names to a predictable snake_case schema."""
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(column_name).strip().lower()).strip("_")
+    return COLUMN_ALIASES.get(normalized, normalized)
+
+
+def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename incoming columns so the rest of the pipeline can use a stable schema."""
+    rename_map = {column: normalize_column_name(column) for column in df.columns}
+    return df.rename(columns=rename_map)
+
+
 def clean_numeric_series(series: pd.Series) -> pd.Series:
-    """Strip common text like '$', 'sqft', and 'bd' before converting to numbers."""
+    """Strip common text like '$', 'sqft', 'mi', and 'bd' before converting to numbers."""
     cleaned = (
         series.astype(str)
         .str.replace("studio", "1", case=False, regex=False)
         .str.replace(",", "", regex=False)
         .str.replace(r"[^0-9.\-]", "", regex=True)
-        .replace("", np.nan)
+        .replace({"": np.nan, "nan": np.nan, "None": np.nan})
     )
     return pd.to_numeric(cleaned, errors="coerce")
 
 
+def clean_boolean_series(series: pd.Series) -> pd.Series:
+    """Normalize yes/no style text into boolean values."""
+    normalized = series.fillna("").astype(str).str.strip().str.lower()
+    cleaned = np.where(
+        normalized.isin(TRUE_VALUES),
+        True,
+        np.where(normalized.isin(FALSE_VALUES), False, np.nan),
+    )
+    return pd.Series(cleaned, index=series.index)
+
+
+def linear_score_lower_is_better(value: pd.Series, target: float, cutoff_multiplier: float) -> pd.Series:
+    """Return 100 at or below target, then linearly decline to 0 at the cutoff."""
+    cutoff = target * cutoff_multiplier
+    score = 100 * (cutoff - value) / max(cutoff - target, 1e-9)
+    score = np.where(value <= target, 100, score)
+    return pd.Series(np.clip(score, 0, 100), index=value.index)
+
+
+def linear_score_higher_is_better(value: pd.Series, floor: float, ceiling: float) -> pd.Series:
+    """Return 0 at or below the floor and 100 at or above the ceiling."""
+    score = 100 * (value - floor) / max(ceiling - floor, 1e-9)
+    return pd.Series(np.clip(score, 0, 100), index=value.index)
+
+
 def clean_apartment_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean numeric and text columns so the dataset is ready for feature engineering."""
-    cleaned_df = df.copy()
+    """Clean numeric, boolean, and text columns so the dataset is ready for scoring."""
+    cleaned_df = standardize_columns(df.copy())
 
     for column in NUMERIC_COLUMNS:
         if column not in cleaned_df.columns:
             cleaned_df[column] = np.nan
 
-    for column in NUMERIC_COLUMNS:
-        cleaned_df[column] = clean_numeric_series(cleaned_df[column])
+    for column in BOOLEAN_COLUMNS:
+        if column not in cleaned_df.columns:
+            cleaned_df[column] = np.nan
 
     for column in TEXT_COLUMNS:
         if column not in cleaned_df.columns:
             cleaned_df[column] = ""
 
+    for column in NUMERIC_COLUMNS:
+        cleaned_df[column] = clean_numeric_series(cleaned_df[column])
+
+    for column in BOOLEAN_COLUMNS:
+        cleaned_df[column] = clean_boolean_series(cleaned_df[column]).fillna(False).astype(bool)
+
     cleaned_df["city"] = cleaned_df["city"].fillna("").astype(str).str.strip().str.title()
     cleaned_df["state"] = cleaned_df["state"].fillna("").astype(str).str.strip().str.upper()
     cleaned_df["description"] = cleaned_df["description"].fillna("").astype(str).str.strip()
 
-    numeric_fill_values = {
-        "rent": cleaned_df["rent"].median(),
-        "bedrooms": cleaned_df["bedrooms"].median(),
-        "bathrooms": cleaned_df["bathrooms"].median(),
-        "square_feet": cleaned_df["square_feet"].median(),
-        "latitude": cleaned_df["latitude"].median(),
-        "longitude": cleaned_df["longitude"].median(),
-    }
+    median_fill_columns = [
+        "rent",
+        "bedrooms",
+        "bathrooms",
+        "square_feet",
+        "latitude",
+        "longitude",
+        "safety_rating",
+        "walkability_score",
+        "lease_length_months",
+        "hidden_fees_estimate",
+    ]
+    for column in median_fill_columns:
+        fill_value = cleaned_df[column].median()
+        cleaned_df[column] = cleaned_df[column].fillna(0 if pd.isna(fill_value) else fill_value)
 
-    for column, fill_value in numeric_fill_values.items():
-        cleaned_df[column] = cleaned_df[column].fillna(fill_value)
-
-    cleaned_df["listing_id"] = cleaned_df.get("listing_id", pd.Series(range(1, len(cleaned_df) + 1)))
-    cleaned_df["property_name"] = cleaned_df.get("property_name", pd.Series(["Unknown Listing"] * len(cleaned_df)))
-    cleaned_df["listing_id"] = pd.to_numeric(cleaned_df["listing_id"], errors="coerce").fillna(
-        pd.Series(range(1, len(cleaned_df) + 1))
+    cleaned_df["listing_id"] = pd.to_numeric(
+        cleaned_df.get("listing_id", pd.Series(np.arange(1, len(cleaned_df) + 1))),
+        errors="coerce",
+    ).fillna(pd.Series(np.arange(1, len(cleaned_df) + 1)))
+    cleaned_df["property_name"] = (
+        cleaned_df.get("property_name", pd.Series(["Unknown Listing"] * len(cleaned_df)))
+        .fillna("Unknown Listing")
+        .astype(str)
+        .str.strip()
     )
-    cleaned_df["property_name"] = cleaned_df["property_name"].fillna("Unknown Listing").astype(str).str.strip()
+
+    cleaned_df["bedrooms"] = cleaned_df["bedrooms"].clip(lower=1)
+    cleaned_df["bathrooms"] = cleaned_df["bathrooms"].clip(lower=0.5)
+    cleaned_df["square_feet"] = cleaned_df["square_feet"].clip(lower=250)
+    cleaned_df["distance_to_campus_miles"] = cleaned_df["distance_to_campus_miles"].clip(lower=0)
+    cleaned_df["commute_time_minutes"] = cleaned_df["commute_time_minutes"].clip(lower=0)
+    cleaned_df["safety_rating"] = cleaned_df["safety_rating"].clip(lower=1, upper=5)
+    cleaned_df["walkability_score"] = cleaned_df["walkability_score"].clip(lower=0, upper=100)
+    cleaned_df["lease_length_months"] = cleaned_df["lease_length_months"].clip(lower=6, upper=18)
+    cleaned_df["hidden_fees_estimate"] = cleaned_df["hidden_fees_estimate"].clip(lower=0)
 
     return cleaned_df
 
@@ -102,40 +206,15 @@ def haversine_distance_miles(
     return earth_radius_miles * c
 
 
-def linear_score_lower_is_better(value: pd.Series, target: float, cutoff_multiplier: float) -> pd.Series:
-    """Return 100 at or below target, then linearly decline to 0 at the cutoff."""
-    cutoff = target * cutoff_multiplier
-    score = 100 * (cutoff - value) / max(cutoff - target, 1e-9)
-    score = np.where(value <= target, 100, score)
-    return pd.Series(np.clip(score, 0, 100), index=value.index)
-
-
-def linear_score_higher_is_better(value: pd.Series, floor: float, ceiling: float) -> pd.Series:
-    """Return 0 at or below the floor and 100 at or above the ceiling."""
-    score = 100 * (value - floor) / max(ceiling - floor, 1e-9)
-    return pd.Series(np.clip(score, 0, 100), index=value.index)
-
-
-def find_keyword_matches(text: str, keyword_groups: Dict[str, Iterable[str]]) -> Tuple[list[str], int]:
-    """Return matched keyword groups and how many categories were detected."""
-    lowered_text = text.lower()
-    matches = []
-
-    for category, keywords in keyword_groups.items():
-        if any(keyword in lowered_text for keyword in keywords):
-            matches.append(category)
-
-    return matches, len(matches)
-
-
 def normalize_priority_weights(preferences: dict) -> dict:
-    """Scale user priority values so the ranking weights add up to 1."""
+    """Scale user priorities so the ranking weights add up to 1."""
     weights = {
-        "budget": preferences["priority_budget"],
+        "affordability": preferences["priority_affordability"],
         "commute": preferences["priority_commute"],
-        "space": preferences["priority_space"],
-        "bathrooms": preferences["priority_bathrooms"],
+        "space_value": preferences["priority_space_value"],
         "amenities": preferences["priority_amenities"],
+        "safety": preferences["priority_safety"],
+        "hidden_cost": preferences["priority_hidden_cost"],
     }
 
     total_weight = sum(weights.values())
@@ -146,42 +225,76 @@ def normalize_priority_weights(preferences: dict) -> dict:
     return {name: value / total_weight for name, value in weights.items()}
 
 
+def summarize_amenities(row: pd.Series) -> str:
+    """List the amenities that are explicitly included for a listing."""
+    matched = [label for column, label in AMENITY_LABELS.items() if bool(row[column])]
+    return ", ".join(matched) if matched else "none"
+
+
+def summarize_hidden_cost_flags(row: pd.Series) -> str:
+    """List the main reasons a listing may carry extra monthly or move-in costs."""
+    flags = []
+    if row["hidden_fees_estimate"] >= 250:
+        flags.append("high upfront fees")
+    elif row["hidden_fees_estimate"] >= 125:
+        flags.append("moderate upfront fees")
+
+    if not row["utilities_included"]:
+        flags.append("utilities extra")
+    if not row["parking_included"]:
+        flags.append("parking separate")
+    if not row["laundry_included"]:
+        flags.append("laundry separate")
+
+    return ", ".join(flags) if flags else "none"
+
+
 def engineer_features(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.DataFrame:
     """Create transparent comparison features used by the ranking algorithm."""
     featured_df = df.copy()
-    total_people = preferences["roommate_count"] + 1
-    bedroom_denominator = featured_df["bedrooms"].clip(lower=1)
+    roommate_count = max(int(preferences.get("roommate_count", 1)), 0)
+    total_people = roommate_count + 1
 
-    # The student is counted as one of the people sharing the apartment.
+    featured_df["distance_to_campus_miles"] = featured_df["distance_to_campus_miles"].fillna(
+        haversine_distance_miles(
+            featured_df["latitude"],
+            featured_df["longitude"],
+            settings["campus_latitude"],
+            settings["campus_longitude"],
+        )
+    )
+
+    estimated_commute = featured_df["distance_to_campus_miles"] / settings["average_commute_speed_mph"] * 60
+    featured_df["commute_minutes_used"] = featured_df["commute_time_minutes"].fillna(estimated_commute)
+
     featured_df["total_people"] = total_people
     featured_df["rent_per_person"] = featured_df["rent"] / total_people
-    featured_df["rent_per_bedroom"] = featured_df["rent"] / bedroom_denominator
+    featured_df["rent_per_bedroom"] = featured_df["rent"] / featured_df["bedrooms"].clip(lower=1)
     featured_df["rent_per_square_foot"] = featured_df["rent"] / featured_df["square_feet"].replace(0, np.nan)
     featured_df["bathroom_ratio"] = featured_df["bathrooms"] / total_people
     featured_df["space_per_person"] = featured_df["square_feet"] / total_people
-    featured_df["bedroom_fit_score"] = np.clip((featured_df["bedrooms"] / total_people) * 100, 0, 100)
-
-    featured_df["distance_to_campus_miles"] = haversine_distance_miles(
-        featured_df["latitude"],
-        featured_df["longitude"],
-        settings["campus_latitude"],
-        settings["campus_longitude"],
+    featured_df["bedroom_share"] = featured_df["bedrooms"] / total_people
+    featured_df["hidden_fees_monthly"] = (
+        featured_df["hidden_fees_estimate"] / featured_df["lease_length_months"].replace(0, np.nan)
     )
-
-    featured_df["estimated_commute_minutes"] = (
-        featured_df["distance_to_campus_miles"] / settings["average_commute_speed_mph"] * 60
+    featured_df["hidden_fees_monthly_per_person"] = featured_df["hidden_fees_monthly"] / total_people
+    featured_df["effective_monthly_cost_per_person"] = (
+        featured_df["rent_per_person"] + featured_df["hidden_fees_monthly_per_person"]
     )
 
     featured_df["affordability_score"] = linear_score_lower_is_better(
         featured_df["rent_per_person"],
         target=preferences["max_rent"],
-        cutoff_multiplier=1.5,
+        cutoff_multiplier=1.6,
     )
 
-    featured_df["commute_score"] = linear_score_lower_is_better(
-        featured_df["estimated_commute_minutes"],
+    featured_df["commute_time_score"] = linear_score_lower_is_better(
+        featured_df["commute_minutes_used"],
         target=preferences["max_commute_minutes"],
         cutoff_multiplier=2.0,
+    )
+    featured_df["commute_convenience_score"] = (
+        0.75 * featured_df["commute_time_score"] + 0.25 * featured_df["walkability_score"]
     )
 
     featured_df["space_score"] = linear_score_higher_is_better(
@@ -189,38 +302,65 @@ def engineer_features(df: pd.DataFrame, preferences: dict, settings: dict) -> pd
         floor=settings["space_score_floor"],
         ceiling=settings["space_score_ceiling"],
     )
-
+    featured_df["value_score"] = linear_score_lower_is_better(
+        featured_df["rent_per_square_foot"],
+        target=settings["value_price_target"],
+        cutoff_multiplier=settings["value_price_cutoff_multiplier"],
+    )
     featured_df["bathroom_score"] = linear_score_higher_is_better(
         featured_df["bathroom_ratio"],
         floor=settings["bathroom_ratio_floor"],
         ceiling=settings["bathroom_ratio_ceiling"],
     )
-
-    featured_df["comfort_score"] = (
-        0.45 * featured_df["space_score"]
-        + 0.35 * featured_df["bathroom_score"]
-        + 0.20 * featured_df["bedroom_fit_score"]
+    featured_df["bedroom_fit_score"] = linear_score_higher_is_better(
+        featured_df["bedroom_share"],
+        floor=settings["bedroom_fit_floor"],
+        ceiling=settings["bedroom_fit_ceiling"],
+    )
+    featured_df["space_value_score"] = (
+        0.40 * featured_df["space_score"]
+        + 0.25 * featured_df["value_score"]
+        + 0.20 * featured_df["bathroom_score"]
+        + 0.15 * featured_df["bedroom_fit_score"]
     )
 
-    amenity_matches = featured_df["description"].apply(
-        lambda text: find_keyword_matches(text, AMENITY_KEYWORDS)
-    )
-    featured_df["matched_amenities"] = amenity_matches.apply(lambda result: ", ".join(result[0]) if result[0] else "none")
-    featured_df["amenity_score"] = amenity_matches.apply(
-        lambda result: 100 * result[1] / len(AMENITY_KEYWORDS)
-    )
-
-    hidden_cost_matches = featured_df["description"].apply(
-        lambda text: find_keyword_matches(text, HIDDEN_COST_KEYWORDS)
-    )
-    featured_df["hidden_cost_flags"] = hidden_cost_matches.apply(
-        lambda result: ", ".join(result[0]) if result[0] else "none"
-    )
-    featured_df["hidden_cost_risk_score"] = hidden_cost_matches.apply(
-        lambda result: 100 * result[1] / len(HIDDEN_COST_KEYWORDS)
+    amenity_weights = settings["amenity_weights"]
+    featured_df["matched_amenities"] = featured_df.apply(summarize_amenities, axis=1)
+    featured_df["amenity_score"] = 100 * sum(
+        weight * featured_df[column].astype(int)
+        for column, weight in amenity_weights.items()
     )
 
-    return featured_df.fillna(0)
+    featured_df["safety_rating_score"] = linear_score_higher_is_better(
+        featured_df["safety_rating"],
+        floor=settings["safety_rating_floor"],
+        ceiling=settings["safety_rating_ceiling"],
+    )
+    featured_df["safety_score"] = (
+        0.85 * featured_df["safety_rating_score"] + 0.15 * featured_df["walkability_score"]
+    )
+
+    exposure_weights = settings["hidden_cost_exposure_weights"]
+    featured_df["extra_cost_exposure_score"] = 100 * sum(
+        weight * (~featured_df[column]).astype(int)
+        for column, weight in exposure_weights.items()
+    )
+    featured_df["hidden_fee_burden_score"] = linear_score_higher_is_better(
+        featured_df["hidden_fees_monthly_per_person"],
+        floor=0,
+        ceiling=settings["hidden_fee_monthly_ceiling_per_person"],
+    )
+    featured_df["hidden_cost_flags"] = featured_df.apply(summarize_hidden_cost_flags, axis=1)
+    featured_df["hidden_cost_risk_score"] = (
+        0.70 * featured_df["hidden_fee_burden_score"]
+        + 0.30 * featured_df["extra_cost_exposure_score"]
+    )
+    featured_df["hidden_cost_score"] = 100 - featured_df["hidden_cost_risk_score"]
+
+    numeric_columns = featured_df.select_dtypes(include=[np.number]).columns
+    featured_df[numeric_columns] = featured_df[numeric_columns].fillna(0)
+
+    return featured_df
 
 
 def rank_apartments(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.DataFrame:
@@ -229,13 +369,12 @@ def rank_apartments(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.D
     weights = normalize_priority_weights(preferences)
 
     ranked_df["overall_score"] = (
-        weights["budget"] * ranked_df["affordability_score"]
-        + weights["commute"] * ranked_df["commute_score"]
-        + weights["space"] * ranked_df["space_score"]
-        + weights["bathrooms"] * ranked_df["bathroom_score"]
+        weights["affordability"] * ranked_df["affordability_score"]
+        + weights["commute"] * ranked_df["commute_convenience_score"]
+        + weights["space_value"] * ranked_df["space_value_score"]
         + weights["amenities"] * ranked_df["amenity_score"]
-        # Extra fees should matter, but not dominate the whole ranking.
-        - settings["hidden_cost_penalty_weight"] * ranked_df["hidden_cost_risk_score"]
+        + weights["safety"] * ranked_df["safety_score"]
+        + weights["hidden_cost"] * ranked_df["hidden_cost_score"]
     )
 
     ranked_df["overall_score"] = ranked_df["overall_score"].clip(lower=0, upper=100).round(2)
@@ -247,16 +386,25 @@ def rank_apartments(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.D
         "bathroom_ratio",
         "space_per_person",
         "distance_to_campus_miles",
-        "estimated_commute_minutes",
+        "commute_minutes_used",
+        "hidden_fees_monthly_per_person",
+        "effective_monthly_cost_per_person",
         "affordability_score",
-        "commute_score",
+        "commute_time_score",
+        "commute_convenience_score",
         "space_score",
+        "value_score",
         "bathroom_score",
-        "comfort_score",
+        "bedroom_fit_score",
+        "space_value_score",
         "amenity_score",
+        "safety_rating_score",
+        "safety_score",
+        "extra_cost_exposure_score",
+        "hidden_fee_burden_score",
         "hidden_cost_risk_score",
+        "hidden_cost_score",
     ]
-
     ranked_df[score_columns] = ranked_df[score_columns].round(2)
 
     return ranked_df.sort_values(by="overall_score", ascending=False).reset_index(drop=True)

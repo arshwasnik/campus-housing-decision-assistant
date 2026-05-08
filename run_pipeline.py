@@ -21,11 +21,25 @@ from campus_housing_decision_assistant.pipeline import (  # noqa: E402
     rank_apartments,
     save_dataframe,
 )
+from campus_housing_decision_assistant.preference_parser import (  # noqa: E402
+    build_pipeline_preferences,
+    parse_preference_text,
+)
 from campus_housing_decision_assistant.visualization import (  # noqa: E402
     plot_rent_vs_distance,
     plot_score_breakdown,
     plot_top_apartments,
 )
+
+
+def build_student_preferences(preference_text: str | None = None) -> tuple[dict, dict | None]:
+    """Return pipeline-ready preferences, optionally parsed from a natural language request."""
+    if not preference_text:
+        return DEFAULT_PREFERENCES.copy(), None
+
+    parsed_preferences = parse_preference_text(preference_text)
+    student_preferences = build_pipeline_preferences(parsed_preferences, DEFAULT_PREFERENCES)
+    return student_preferences, parsed_preferences
 
 
 def print_recommendations(ranked_df, top_n: int = 5) -> None:
@@ -52,8 +66,15 @@ def main() -> None:
     """Run the full Phase 1 apartment ranking pipeline."""
     input_csv_path = RAW_DATA_PATH
 
-    # Edit this dictionary to test different student preferences.
-    student_preferences = DEFAULT_PREFERENCES.copy()
+    # Set this to a sentence to test the rule-based preference parser.
+    user_preference_text = None
+    # Example:
+    # user_preference_text = (
+    #     "I want something under $850 per month, within 15 minutes of campus, "
+    #     "with parking and laundry. I care most about low rent and commute time."
+    # )
+
+    student_preferences, parsed_preferences = build_student_preferences(user_preference_text)
 
     raw_df = load_apartment_data(input_csv_path)
     cleaned_df = clean_apartment_data(raw_df)
@@ -73,6 +94,10 @@ def main() -> None:
     print(f"Saved cleaned data to: {cleaned_output_path}")
     print(f"Saved ranked results to: {ranked_output_path}")
     print(f"Saved figures to: {FIGURES_DIR}")
+    if parsed_preferences is not None:
+        print("\nParsed preferences from natural language:")
+        for key, value in parsed_preferences.items():
+            print(f"  - {key}: {value}")
     print("\nStudent preferences:")
     for key, value in student_preferences.items():
         print(f"  - {key}: {value}")

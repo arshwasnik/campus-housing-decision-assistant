@@ -12,6 +12,8 @@ DEFAULT_PREFERENCES = {
     "max_rent": 950,
     "max_commute_minutes": 15,
     "roommate_count": 1,
+    "desired_bedrooms": None,
+    "required_amenities": [],
     "priority_affordability": 0.30,
     "priority_commute": 0.20,
     "priority_space_value": 0.18,

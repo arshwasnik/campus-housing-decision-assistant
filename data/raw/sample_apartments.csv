@@ -1,0 +1,13 @@
+listing_id,property_name,rent,bedrooms,bathrooms,square_feet,city,state,latitude,longitude,description
+1,Orange Grove Flats,"$1,650/mo",2 bd,2 ba,940 sqft,austin,tx,30.2927,-97.7410,"Walk to campus. In-unit laundry, furnished bedrooms, parking included, and high-speed internet."
+2,North Loop Studios,"$1,050 / month",1 bed,1 bath,480 sq ft,Austin,TX,30.3002,-97.7291,"Compact studio with on-site laundry. Utilities not included. $150 admin fee."
+3,West Campus Commons,"$2,400",4 bedrooms,4 bathrooms,"1,500",Austin,Tx,30.2894,-97.7447,"Popular student apartment with gym, study lounge, furnished units, and covered parking."
+4,Riverside Terrace,"$1,800/mo",3 bd,2 bath,1200 sqft,AUSTIN,TX,30.2495,-97.7183,"Shuttle stop nearby. Washer/dryer hookups. Tenant pays electricity and water."
+5,Pearl Street House,"$3,200",4 bed,3 bath,2000 sqft,austin , tx ,30.2938,-97.7465,"Spacious house with dishwasher, backyard, parking, and laundry room. $75 application fee."
+6,Guadalupe Lofts,"$1,920/mo",2 bd,1 ba,760 sqft,Austin,TX,30.2958,-97.7419,"Modern unit with balcony, gym, and package lockers. Parking fee applies. Pet fee required."
+7,Speedway Apartments,"$2,050",3 bd,2 ba,1100 sqft,Austin,TX,30.2950,-97.7330,"Campus shuttle access, utilities included, study rooms, and bike storage."
+8,Campus Edge Micro,"$900/mo",studio,1 bath,320 sqft,Austin,TX,30.2862,-97.7398,"Very close to campus. Furnished micro-studio with shared laundry."
+9,Red River Residences,"$2,700 / mo",3 bd,3 ba,1350 sqft,Austin,TX,30.2878,-97.7320,"Premium building with pool, gym, in-unit laundry, garage parking, and package lockers."
+10,Hyde Park Shared,"$1,500",2 bed,1 bath,900 sqft,Austin,TX,30.3017,-97.7261,"Quiet area with free street parking. Older unit. Tenant pays gas and internet."
+11,Greenline Flats,"$2,200/mo",3 bd,2.5 bath,1300 sqft,Austin,TX,30.2784,-97.7268,"Near bus line. Laundry in unit, furnished living room, and no parking fee."
+12,Union Heights,"$2,600",4 bd,2 ba,,Austin,TX,30.3096,-97.7428,"Affordable four-bedroom option with dishwasher, laundry room, and optional reserved parking for $40 per month."

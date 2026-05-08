@@ -60,6 +60,27 @@ AMENITY_LABELS = {
 }
 
 
+REQUIRED_AMENITY_COLUMN_MAP = {
+    "parking": "parking_included",
+    "laundry": "laundry_included",
+    "utilities_included": "utilities_included",
+    "furnished": "furnished",
+    "pet_friendly": "pet_friendly",
+}
+
+
+DESCRIPTION_AMENITY_KEYWORDS = {
+    "parking": ["parking", "garage", "bike storage"],
+    "laundry": ["laundry", "washer", "dryer", "washer/dryer"],
+    "utilities_included": ["utilities included", "all utilities", "water included"],
+    "furnished": ["furnished"],
+    "pet_friendly": ["pet friendly", "pets allowed", "cat friendly", "dog friendly"],
+    "gym": ["gym", "fitness center"],
+    "study_space": ["study", "study room", "study lounge"],
+    "internet": ["internet", "wi-fi", "wifi"],
+}
+
+
 TRUE_VALUES = {"true", "yes", "y", "1", "included", "free", "covered", "available"}
 FALSE_VALUES = {"false", "no", "n", "0", "not included", "none", "street", "paid", "extra"}
 
@@ -249,11 +270,65 @@ def summarize_hidden_cost_flags(row: pd.Series) -> str:
     return ", ".join(flags) if flags else "none"
 
 
+def score_bedroom_preference(bedrooms: pd.Series, desired_bedrooms: int | None) -> pd.Series:
+    """Reward matches to a requested bedroom count without overpowering the main space/value score."""
+    if desired_bedrooms is None:
+        return pd.Series(100.0, index=bedrooms.index)
+
+    difference = bedrooms - desired_bedrooms
+    scores = np.where(difference >= 0, 100 - (difference * 15), 100 - (np.abs(difference) * 35))
+    return pd.Series(np.clip(scores, 0, 100), index=bedrooms.index)
+
+
+def score_required_amenities(df: pd.DataFrame, required_amenities: list[str]) -> pd.Series:
+    """Score required amenities using explicit columns first and description fallback when needed."""
+    if not required_amenities:
+        return pd.Series(100.0, index=df.index)
+
+    matched_counts = pd.Series(0.0, index=df.index)
+
+    for amenity in required_amenities:
+        column_name = REQUIRED_AMENITY_COLUMN_MAP.get(amenity)
+        if column_name is not None:
+            matched_counts += df[column_name].astype(float)
+            continue
+
+        keywords = DESCRIPTION_AMENITY_KEYWORDS.get(amenity, [amenity.replace("_", " ")])
+        matched_counts += df["description"].str.lower().apply(
+            lambda text: float(any(keyword in text for keyword in keywords))
+        )
+
+    return 100 * matched_counts / len(required_amenities)
+
+
+def summarize_missing_required_amenities(row: pd.Series, required_amenities: list[str]) -> str:
+    """Show which requested amenities a listing does not satisfy."""
+    if not required_amenities:
+        return "none"
+
+    missing = []
+    description_text = str(row["description"]).lower()
+    for amenity in required_amenities:
+        column_name = REQUIRED_AMENITY_COLUMN_MAP.get(amenity)
+        if column_name is not None and bool(row[column_name]):
+            continue
+
+        keywords = DESCRIPTION_AMENITY_KEYWORDS.get(amenity, [amenity.replace("_", " ")])
+        if any(keyword in description_text for keyword in keywords):
+            continue
+
+        missing.append(amenity)
+
+    return ", ".join(missing) if missing else "none"
+
+
 def engineer_features(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.DataFrame:
     """Create transparent comparison features used by the ranking algorithm."""
     featured_df = df.copy()
     roommate_count = max(int(preferences.get("roommate_count", 1)), 0)
     total_people = roommate_count + 1
+    desired_bedrooms = preferences.get("desired_bedrooms")
+    required_amenities = preferences.get("required_amenities", [])
 
     featured_df["distance_to_campus_miles"] = featured_df["distance_to_campus_miles"].fillna(
         haversine_distance_miles(
@@ -317,19 +392,39 @@ def engineer_features(df: pd.DataFrame, preferences: dict, settings: dict) -> pd
         floor=settings["bedroom_fit_floor"],
         ceiling=settings["bedroom_fit_ceiling"],
     )
+    featured_df["bedroom_preference_score"] = score_bedroom_preference(
+        featured_df["bedrooms"],
+        desired_bedrooms=desired_bedrooms,
+    )
     featured_df["space_value_score"] = (
-        0.40 * featured_df["space_score"]
+        0.35 * featured_df["space_score"]
         + 0.25 * featured_df["value_score"]
         + 0.20 * featured_df["bathroom_score"]
-        + 0.15 * featured_df["bedroom_fit_score"]
+        + 0.10 * featured_df["bedroom_fit_score"]
+        + 0.10 * featured_df["bedroom_preference_score"]
     )
 
     amenity_weights = settings["amenity_weights"]
     featured_df["matched_amenities"] = featured_df.apply(summarize_amenities, axis=1)
-    featured_df["amenity_score"] = 100 * sum(
+    featured_df["base_amenity_score"] = 100 * sum(
         weight * featured_df[column].astype(int)
         for column, weight in amenity_weights.items()
     )
+    featured_df["required_amenity_match_score"] = score_required_amenities(
+        featured_df,
+        required_amenities=required_amenities,
+    )
+    featured_df["missing_required_amenities"] = featured_df.apply(
+        lambda row: summarize_missing_required_amenities(row, required_amenities),
+        axis=1,
+    )
+    if required_amenities:
+        featured_df["amenity_score"] = (
+            0.70 * featured_df["base_amenity_score"]
+            + 0.30 * featured_df["required_amenity_match_score"]
+        )
+    else:
+        featured_df["amenity_score"] = featured_df["base_amenity_score"]
 
     featured_df["safety_rating_score"] = linear_score_higher_is_better(
         featured_df["safety_rating"],
@@ -396,7 +491,10 @@ def rank_apartments(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.D
         "value_score",
         "bathroom_score",
         "bedroom_fit_score",
+        "bedroom_preference_score",
         "space_value_score",
+        "base_amenity_score",
+        "required_amenity_match_score",
         "amenity_score",
         "safety_rating_score",
         "safety_score",

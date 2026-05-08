@@ -15,6 +15,7 @@ env/
 # OS-specific files
 .DS_Store
 Thumbs.db
+.idea/
 
 # Generated project outputs
 data/processed/

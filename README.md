@@ -8,9 +8,10 @@ This prototype stays intentionally simple:
 - clean student-relevant housing fields
 - engineer a handful of comparison features
 - score listings using readable weighted rules
+- parse natural language preferences into structured scoring inputs
 - save ranked outputs and a few charts
 
-There is no front end yet. The value of the project is the data pipeline and the explainable ranking logic.
+There is no front end yet. The value of the project is the data pipeline and the explainable ranking logic. The preference parser is rule-based on purpose so the project can later evolve into an AI-assisted system where the model produces structured inputs instead of unsupported end-to-end recommendations.
 
 ## Project Structure
 
@@ -27,6 +28,7 @@ campus-housing-decision-assistant/
 |       |-- __init__.py
 |       |-- config.py
 |       |-- pipeline.py
+|       |-- preference_parser.py
 |       |-- visualization.py
 |-- requirements.txt
 |-- run_pipeline.py
@@ -35,7 +37,7 @@ campus-housing-decision-assistant/
 
 ## Sample Dataset
 
-The sample file at [data/raw/sample_apartments.csv](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/data/raw/sample_apartments.csv) now includes 36 realistic listings near a UT Austin style campus area.
+The sample file at [data/raw/sample_apartments.csv](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/data/raw/sample_apartments.csv) includes 36 realistic listings near a UT Austin style campus area.
 
 The dataset includes fields that matter to students:
 
@@ -80,6 +82,64 @@ The pipeline standardizes the raw CSV into a predictable schema before ranking:
 
 The core data prep lives in [src/campus_housing_decision_assistant/pipeline.py](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/src/campus_housing_decision_assistant/pipeline.py).
 
+## Natural Language Preference Parsing
+
+The parser lives in [src/campus_housing_decision_assistant/preference_parser.py](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/src/campus_housing_decision_assistant/preference_parser.py). It uses string matching and regular expressions to identify:
+
+- maximum rent
+- maximum commute time
+- desired number of bedrooms
+- desired amenities
+- priority categories like price, commute, space, amenities, and safety
+
+### Example Input
+
+```text
+I want something under $850 per month, within 15 minutes of campus, with parking and laundry. I care most about low rent and commute time.
+```
+
+### Example Parsed Output
+
+```python
+{
+    "max_rent": 850,
+    "max_commute_minutes": 15,
+    "desired_bedrooms": None,
+    "required_amenities": ["parking", "laundry"],
+    "weights": {
+        "affordability": 0.37,
+        "commute": 0.30,
+        "space": 0.12,
+        "amenities": 0.14,
+        "safety": 0.07,
+    },
+}
+```
+
+The exact weights are heuristic because they are derived from rule-based signals rather than an LLM.
+
+### More Example Inputs
+
+```text
+I need a 2 bedroom place under $950 with laundry and furnished rooms. Space matters more than amenities.
+```
+
+```text
+Find something close to campus. I care most about safety and commute, and I want parking.
+```
+
+```text
+I want the cheapest option possible, ideally under $800, and I do not mind a smaller place.
+```
+
+The parser output is adapted into the same preference dictionary the ranking pipeline already uses. That separation is intentional:
+
+1. natural language input comes in
+2. the parser turns it into structured preferences
+3. the ranking pipeline applies deterministic scoring rules
+
+Later, a real LLM can replace or assist the parser without changing how recommendations are scored.
+
 ## Scoring System
 
 Every listing gets component scores from `0` to `100`, then those components are combined into one `overall_score`.
@@ -113,10 +173,11 @@ This score combines room to live with what the student is paying for it:
 
 ```text
 space_value_score =
-    0.40 * space_score
+    0.35 * space_score
   + 0.25 * value_score
   + 0.20 * bathroom_score
-  + 0.15 * bedroom_fit_score
+  + 0.10 * bedroom_fit_score
+  + 0.10 * bedroom_preference_score
 ```
 
 Where:
@@ -125,10 +186,11 @@ Where:
 - `value_score` rewards lower `rent_per_square_foot`
 - `bathroom_score` rewards better bathroom-to-person ratios
 - `bedroom_fit_score` checks whether the unit has enough bedrooms for the expected roommate setup
+- `bedroom_preference_score` nudges listings toward the user's requested bedroom count without replacing the main space/value logic
 
 ### 4. Amenities
 
-Amenities are scored from explicit listing fields rather than inferred from description text:
+Amenities are scored from explicit listing fields:
 
 - parking
 - laundry
@@ -136,30 +198,17 @@ Amenities are scored from explicit listing fields rather than inferred from desc
 - furnished
 - pet friendly
 
-These are weighted so laundry and utilities matter more than nice-to-have extras:
-
-```text
-amenity_score =
-    0.15 * parking
-  + 0.25 * laundry
-  + 0.30 * utilities
-  + 0.20 * furnished
-  + 0.10 * pet_friendly
-```
-
-The score is then scaled to `0` to `100`.
+When the user names required amenities, the pipeline also calculates a `required_amenity_match_score`. It checks explicit amenity columns first, then falls back to the description when needed for amenities like `gym` or `internet`.
 
 ### 5. Safety
 
-Safety is mostly driven by the listing's `safety_rating`, with a small walkability contribution:
+Safety is driven by the listing's `safety_rating`, with a small walkability contribution:
 
 ```text
 safety_score =
     0.85 * safety_rating_score
   + 0.15 * walkability_score
 ```
-
-This keeps safety separate from commute while still recognizing that highly walkable student areas can be easier to navigate day to day.
 
 ### 6. Hidden Cost Risk
 
@@ -199,7 +248,7 @@ overall_score =
   + hidden_cost_weight * hidden_cost_score
 ```
 
-That makes the logic easy to explain and easy to tune.
+That keeps the recommendation logic transparent and easy to tune.
 
 ## Default Preferences
 
@@ -210,6 +259,8 @@ DEFAULT_PREFERENCES = {
     "max_rent": 950,
     "max_commute_minutes": 15,
     "roommate_count": 1,
+    "desired_bedrooms": None,
+    "required_amenities": [],
     "priority_affordability": 0.30,
     "priority_commute": 0.20,
     "priority_space_value": 0.18,
@@ -241,6 +292,13 @@ If `python` is not available on your machine, try:
 py run_pipeline.py
 ```
 
+Inside [run_pipeline.py](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/run_pipeline.py), you can optionally set `user_preference_text` to a plain-English request. When that string is present, the parser will:
+
+- extract structured preferences
+- merge them with defaults
+- pass them into the ranking pipeline
+- print both the parsed preferences and the final pipeline preferences
+
 ## Output Files
 
 Running the script saves:
@@ -249,13 +307,11 @@ Running the script saves:
 - [data/processed/ranked_apartment_recommendations.csv](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/data/processed/ranked_apartment_recommendations.csv)
 - figures in [outputs/figures](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/outputs/figures)
 
-## Why This Prototype Works
+## Why This Design Is Useful
 
-This version is still simple enough to discuss in an interview or build on later:
+This version is a good stepping stone toward AI-assisted recommendations because it separates concerns cleanly:
 
-- the scoring is transparent
-- the features reflect actual student tradeoffs
-- the dataset is large enough to show interesting ranking behavior
-- the pipeline is easy to extend without needing a UI first
-
-Natural next steps could include preference parsing, explanation generation, or pulling real listings from a scraper or API, but the current prototype stands on its own as a clean analytics project.
+- parsing is isolated in one module
+- scoring stays deterministic and auditable
+- the system can explain why a listing ranked well
+- a future LLM can be added as a structured preference extraction layer instead of a black-box recommender

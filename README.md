@@ -1,16 +1,83 @@
 # Campus Housing Decision Assistant
 
-Campus Housing Decision Assistant is an explainable student housing ranking system built in two phases:
+Campus Housing Decision Assistant is a focused AI-assisted decision system for student housing.
 
-1. Phase 1: data cleaning, feature engineering, and weighted apartment ranking
-2. Phase 2: natural language preference parsing that turns a user sentence into structured scoring inputs
+The core idea is simple:
 
-The project currently has no front end yet. It is intentionally focused on the data pipeline, scoring logic, and explainable preference parsing so it is easy to discuss in interviews and easy to extend later.
+1. a user writes housing preferences in plain English
+2. the system converts that text into structured ranking inputs
+3. an explainable weighted model scores apartment listings
+4. the system returns top recommendations with plain-English explanations of strengths and tradeoffs
+
+The project is intentionally small and deterministic. It does not use React, a database, or an LLM API in the current version.
+
+## Final Project Phases
+
+### Phase 1: Explainable Housing Ranking
+
+Phase 1 handles the ranking pipeline end to end:
+
+- load apartment listings from [data/raw/sample_apartments.csv](data/raw/sample_apartments.csv)
+- clean messy housing fields such as rent strings, square footage text, and yes/no amenity fields
+- engineer student-centered features such as `rent_per_person`, `space_per_person`, `commute_convenience_score`, and `hidden_cost_score`
+- rank listings with a transparent weighted scoring model
+- save cleaned outputs, ranked outputs, and visualizations
+
+The ranking model considers:
+
+- affordability
+- commute convenience
+- space and value
+- amenities
+- safety
+- hidden cost risk
+
+### Phase 2: Natural Language Preference Parsing
+
+Phase 2 adds a rule-based parser in [preference_parser.py](src/campus_housing_decision_assistant/preference_parser.py).
+
+The parser is intentionally explainable:
+
+- it uses Python string matching
+- it uses regular expressions
+- it does not call the OpenAI API
+- it converts a user sentence into structured inputs for the existing scoring pipeline
+
+The parser can extract:
+
+- maximum rent
+- maximum commute time
+- desired bedrooms
+- required amenities
+- priority weights for affordability, commute, space/value, amenities, safety, and hidden cost risk
+
+This means the recommendation flow stays consistent:
+
+1. parse the user sentence
+2. build pipeline-ready preferences
+3. rank apartments with the existing deterministic scoring model
+
+### Phase 3: Streamlit Demo with Recommendation Explanations
+
+Phase 3 adds two lightweight product-facing pieces:
+
+- recommendation explanations generated from score columns, apartment fields, and parsed preferences
+- a simple [app.py](app.py) Streamlit demo
+
+Each top recommendation now includes a `recommendation_explanation` that describes:
+
+- why the apartment ranked highly
+- which user preferences it matched
+- strongest factors such as affordability, commute, safety, amenities, or space
+- one tradeoff when relevant, such as higher rent, longer commute, smaller space, missing amenities, or hidden fees
+
+These explanations are rule-based and deterministic. They do not use an LLM in the current version.
 
 ## Project Structure
 
 ```text
 campus-housing-decision-assistant/
+|-- app.py
 |-- data/
 |   |-- raw/
 |   |   |-- sample_apartments.csv
@@ -23,119 +90,12 @@ campus-housing-decision-assistant/
 |       |-- config.py
 |       |-- pipeline.py
 |       |-- preference_parser.py
+|       |-- recommendation_explainer.py
 |       |-- visualization.py
 |-- requirements.txt
 |-- run_pipeline.py
 |-- README.md
 ```
-
-## Phase 1: Data Cleaning and Apartment Ranking
-
-Phase 1 handles the ranking pipeline end to end:
-
-- load apartment listings from [data/raw/sample_apartments.csv](data/raw/sample_apartments.csv)
-- clean messy values such as rent strings, square footage text, and yes/no amenity fields
-- engineer comparison features such as `rent_per_person`, `commute_convenience_score`, `space_value_score`, and `hidden_cost_score`
-- rank apartments with weighted, transparent scoring rules
-- save ranked CSV outputs and charts
-
-The core ranking code lives in:
-
-- [config.py](src/campus_housing_decision_assistant/config.py)
-- [pipeline.py](src/campus_housing_decision_assistant/pipeline.py)
-- [visualization.py](src/campus_housing_decision_assistant/visualization.py)
-
-### What the ranking considers
-
-The scoring system combines:
-
-- affordability
-- commute convenience
-- space and value
-- amenities
-- safety
-- hidden cost risk
-
-This keeps the recommendation logic deterministic and explainable instead of acting like a black-box recommender.
-
-## Phase 2: Natural Language Preference Parsing
-
-Phase 2 adds a rule-based parser in [preference_parser.py](src/campus_housing_decision_assistant/preference_parser.py).
-
-The parser is intentionally simple and explainable:
-
-- it uses Python string matching
-- it uses regular expressions
-- it does not require an OpenAI API key
-- it converts a plain-English sentence into structured inputs for the existing ranking pipeline
-
-The parser can extract:
-
-- maximum rent
-- maximum commute time
-- desired bedrooms
-- required amenities
-- priority weights for affordability, commute, space, amenities, safety, and hidden cost risk
-
-### Example preference sentences
-
-1. `I want something under $850 per month, within 15 minutes of campus, with parking and laundry. I care most about low rent, commute time, and avoiding hidden fees.`
-
-This parser extracts:
-
-- `max_rent = 850`
-- `max_commute_minutes = 15`
-- `required_amenities = ["parking", "laundry"]`
-- higher weights for affordability, commute, and hidden cost risk
-
-2. `I need a 2 bedroom place under $950 with laundry and furnished rooms. Space matters more than amenities.`
-
-This parser extracts:
-
-- `desired_bedrooms = 2`
-- `max_rent = 950`
-- `required_amenities = ["laundry", "furnished"]`
-- a higher weight for space/value
-
-3. `Find something close to campus. I care most about safety and commute, and I want parking.`
-
-This parser extracts:
-
-- a commute constraint when minutes are stated
-- `required_amenities = ["parking"]`
-- higher weights for safety and commute
-
-### Why this design matters
-
-Phase 2 is designed as a structured-input layer, not a direct recommendation engine:
-
-1. the user writes a natural language preference sentence
-2. the parser converts it into structured preferences
-3. the existing ranking pipeline scores listings using deterministic logic
-
-That makes the system easier to explain, easier to test, and easier to upgrade later if you want to add an LLM without changing the ranking core.
-
-## Sample Dataset
-
-The sample dataset in [data/raw/sample_apartments.csv](data/raw/sample_apartments.csv) includes realistic student-focused fields such as:
-
-- `rent`
-- `bedrooms`
-- `bathrooms`
-- `square_feet`
-- `distance_to_campus_miles`
-- `commute_time_minutes`
-- `parking_included`
-- `laundry_included`
-- `utilities_included`
-- `furnished`
-- `pet_friendly`
-- `safety_rating`
-- `walkability_score`
-- `lease_length_months`
-- `hidden_fees_estimate`
-
-The raw values intentionally include realistic text formatting like `$1,650/mo`, `2 bd`, `940 sqft`, and `8 min` so the cleaning step is not trivial.
 
 ## How to Run
 
@@ -145,36 +105,49 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Run the Phase 2 demo script:
+Run the command-line pipeline demo:
 
 ```bash
 python run_pipeline.py
 ```
 
-The script:
+This script:
 
-- prints the original preference sentence
-- parses it with the rule-based parser
-- converts the parsed output into pipeline-ready preferences
-- ranks the apartment listings
-- prints the top 3 recommendations with key scores
-- saves ranked outputs and charts
+- loads and cleans the apartment data
+- parses an example natural language preference sentence
+- converts parsed preferences into ranking inputs
+- ranks the listings
+- saves cleaned data, ranked data, and figures
+- prints top recommendations and their explanations
+
+Run the Streamlit demo:
+
+```bash
+streamlit run app.py
+```
+
+The Streamlit app:
+
+- accepts natural language housing preferences
+- uses the existing rule-based parser
+- runs the same explainable ranking pipeline
+- shows top apartment recommendations
+- shows plain-English recommendation explanations
+- displays a ranked results table
+- includes a simple rent-versus-commute visualization
 
 ## Output Files
 
-Running the script generates:
+Running the pipeline generates:
 
 - `data/processed/cleaned_apartment_listings.csv`
 - `data/processed/ranked_apartment_recommendations.csv`
 - figures in `outputs/figures/`
 
-## Why This Repo Looks Good in Interviews
+The ranked recommendations CSV now includes a `recommendation_explanation` column.
 
-This project now tells a clean, professional story:
+## Future Extension
 
-- Phase 1 shows practical data cleaning and ranking logic
-- Phase 2 shows how natural language can be translated into structured inputs
-- the scoring remains explainable and auditable
-- the architecture leaves room for a future AI layer without hiding the decision logic
+A future version could replace or supplement the current rule-based parser with an LLM-based JSON preference extractor.
 
-That makes it a strong example of building an AI-adjacent product in a responsible, understandable way.
+That would make preference extraction more flexible while still preserving the existing ranking pipeline as the explainable recommendation core.

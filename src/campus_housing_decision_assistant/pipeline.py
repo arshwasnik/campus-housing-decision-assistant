@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .recommendation_explainer import add_recommendation_explanations
+
 
 NUMERIC_COLUMNS = [
     "rent",
@@ -293,9 +295,8 @@ def score_required_amenities(df: pd.DataFrame, required_amenities: list[str]) ->
             matched_counts += df[column_name].astype(float)
             continue
 
-        keywords = DESCRIPTION_AMENITY_KEYWORDS.get(amenity, [amenity.replace("_", " ")])
         matched_counts += df["description"].str.lower().apply(
-            lambda text: float(any(keyword in text for keyword in keywords))
+            lambda text: float(description_mentions_amenity(text, amenity))
         )
 
     return 100 * matched_counts / len(required_amenities)
@@ -313,13 +314,39 @@ def summarize_missing_required_amenities(row: pd.Series, required_amenities: lis
         if column_name is not None and bool(row[column_name]):
             continue
 
-        keywords = DESCRIPTION_AMENITY_KEYWORDS.get(amenity, [amenity.replace("_", " ")])
-        if any(keyword in description_text for keyword in keywords):
+        if description_mentions_amenity(description_text, amenity):
             continue
 
         missing.append(amenity)
 
     return ", ".join(missing) if missing else "none"
+
+
+def description_mentions_amenity(description_text: str, amenity: str) -> bool:
+    """Check description text for an amenity while avoiding simple negated mentions."""
+    normalized_text = str(description_text).lower()
+    keywords = DESCRIPTION_AMENITY_KEYWORDS.get(amenity, [amenity.replace("_", " ")])
+
+    for keyword in keywords:
+        if keyword not in normalized_text:
+            continue
+
+        negative_patterns = [
+            f"no {keyword}",
+            f"without {keyword}",
+            f"{keyword} not included",
+            f"no {keyword} included",
+            f"{keyword} extra",
+            f"paid {keyword}",
+            f"{keyword} separate",
+            f"separate {keyword}",
+        ]
+        if any(pattern in normalized_text for pattern in negative_patterns):
+            continue
+
+        return True
+
+    return False
 
 
 def engineer_features(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.DataFrame:
@@ -458,7 +485,12 @@ def engineer_features(df: pd.DataFrame, preferences: dict, settings: dict) -> pd
     return featured_df
 
 
-def rank_apartments(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.DataFrame:
+def rank_apartments(
+    df: pd.DataFrame,
+    preferences: dict,
+    settings: dict,
+    parsed_preferences: dict | None = None,
+) -> pd.DataFrame:
     """Apply the weighted scoring system and sort apartments from best to worst."""
     ranked_df = engineer_features(df, preferences, settings)
     weights = normalize_priority_weights(preferences)
@@ -504,8 +536,14 @@ def rank_apartments(df: pd.DataFrame, preferences: dict, settings: dict) -> pd.D
         "hidden_cost_score",
     ]
     ranked_df[score_columns] = ranked_df[score_columns].round(2)
+    ranked_df = ranked_df.sort_values(by="overall_score", ascending=False).reset_index(drop=True)
+    ranked_df = add_recommendation_explanations(
+        ranked_df,
+        preferences=preferences,
+        parsed_preferences=parsed_preferences,
+    )
 
-    return ranked_df.sort_values(by="overall_score", ascending=False).reset_index(drop=True)
+    return ranked_df
 
 
 def save_dataframe(df: pd.DataFrame, output_path: Path | str) -> None:

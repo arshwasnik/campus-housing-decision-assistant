@@ -68,6 +68,10 @@ def print_recommendations(ranked_df, top_n: int = 3) -> None:
     print(f"\nTop {top_n} apartment recommendations:\n")
     print(ranked_df.loc[:, columns_to_show].head(top_n).to_string(index=False))
 
+    print("\nRecommendation explanations:")
+    for rank, (_, row) in enumerate(ranked_df.head(top_n).iterrows(), start=1):
+        print(f"  {rank}. {row['property_name']}: {row['recommendation_explanation']}")
+
 
 def main() -> None:
     """Run the apartment ranking pipeline using a natural language preference example."""
@@ -78,7 +82,12 @@ def main() -> None:
 
     raw_df = load_apartment_data(input_csv_path)
     cleaned_df = clean_apartment_data(raw_df)
-    ranked_df = rank_apartments(cleaned_df, student_preferences, SCORING_SETTINGS)
+    ranked_df = rank_apartments(
+        cleaned_df,
+        student_preferences,
+        SCORING_SETTINGS,
+        parsed_preferences=parsed_preferences,
+    )
 
     cleaned_output_path = PROCESSED_DATA_DIR / "cleaned_apartment_listings.csv"
     ranked_output_path = PROCESSED_DATA_DIR / "ranked_apartment_recommendations.csv"

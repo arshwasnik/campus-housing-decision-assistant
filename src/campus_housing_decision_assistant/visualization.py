@@ -12,6 +12,46 @@ import matplotlib.pyplot as plt
 plt.style.use("ggplot")
 
 
+def create_rent_vs_commute_figure(df: pd.DataFrame, top_n_highlight: int = 5):
+    """Return a scatter plot figure for rent per person versus commute time."""
+    figure, axis = plt.subplots(figsize=(10, 6))
+    scatter = axis.scatter(
+        df["commute_minutes_used"],
+        df["rent_per_person"],
+        c=df["overall_score"],
+        cmap="viridis",
+        s=90,
+        alpha=0.85,
+        edgecolors="black",
+    )
+
+    highlighted_df = df.head(top_n_highlight)
+    axis.scatter(
+        highlighted_df["commute_minutes_used"],
+        highlighted_df["rent_per_person"],
+        s=180,
+        facecolors="none",
+        edgecolors="black",
+        linewidths=1.5,
+    )
+
+    for _, row in highlighted_df.iterrows():
+        axis.annotate(
+            row["property_name"],
+            (row["commute_minutes_used"], row["rent_per_person"]),
+            xytext=(6, 6),
+            textcoords="offset points",
+            fontsize=8,
+        )
+
+    axis.set_title("Rent Per Person vs. Commute Time")
+    axis.set_xlabel("Commute Time (minutes)")
+    axis.set_ylabel("Rent Per Person (USD)")
+    figure.colorbar(scatter, ax=axis, label="Overall Score")
+    figure.tight_layout()
+    return figure
+
+
 def plot_rent_vs_distance(df: pd.DataFrame, output_path: Path | str) -> None:
     """Scatter plot showing rent per person against distance to campus."""
     figure, axis = plt.subplots(figsize=(10, 6))

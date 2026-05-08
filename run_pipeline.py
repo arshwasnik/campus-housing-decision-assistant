@@ -32,7 +32,14 @@ from campus_housing_decision_assistant.visualization import (  # noqa: E402
 )
 
 
-def build_student_preferences(preference_text: str | None = None) -> tuple[dict, dict | None]:
+EXAMPLE_PREFERENCE_TEXT = (
+    "I want something under $850 per month, within 15 minutes of campus, "
+    "with parking and laundry. I care most about low rent, commute time, "
+    "and avoiding hidden fees."
+)
+
+
+def build_student_preferences(preference_text: str | None) -> tuple[dict, dict | None]:
     """Return pipeline-ready preferences, optionally parsed from a natural language request."""
     if not preference_text:
         return DEFAULT_PREFERENCES.copy(), None
@@ -42,8 +49,8 @@ def build_student_preferences(preference_text: str | None = None) -> tuple[dict,
     return student_preferences, parsed_preferences
 
 
-def print_recommendations(ranked_df, top_n: int = 5) -> None:
-    """Print the top apartments and the score components behind each ranking."""
+def print_recommendations(ranked_df, top_n: int = 3) -> None:
+    """Print a compact ranking summary for the best listings."""
     columns_to_show = [
         "property_name",
         "rent",
@@ -54,25 +61,18 @@ def print_recommendations(ranked_df, top_n: int = 5) -> None:
         "commute_convenience_score",
         "amenity_score",
         "safety_score",
-        "hidden_cost_risk_score",
+        "hidden_cost_score",
         "overall_score",
     ]
 
-    print("\nTop apartment recommendations:\n")
+    print(f"\nTop {top_n} apartment recommendations:\n")
     print(ranked_df.loc[:, columns_to_show].head(top_n).to_string(index=False))
 
 
 def main() -> None:
-    """Run the full Phase 1 apartment ranking pipeline."""
+    """Run the apartment ranking pipeline using a natural language preference example."""
     input_csv_path = RAW_DATA_PATH
-
-    # Set this to a sentence to test the rule-based preference parser.
-    user_preference_text = None
-    # Example:
-    # user_preference_text = (
-    #     "I want something under $850 per month, within 15 minutes of campus, "
-    #     "with parking and laundry. I care most about low rent and commute time."
-    # )
+    user_preference_text = EXAMPLE_PREFERENCE_TEXT
 
     student_preferences, parsed_preferences = build_student_preferences(user_preference_text)
 
@@ -94,15 +94,19 @@ def main() -> None:
     print(f"Saved cleaned data to: {cleaned_output_path}")
     print(f"Saved ranked results to: {ranked_output_path}")
     print(f"Saved figures to: {FIGURES_DIR}")
+    print("\nOriginal preference sentence:")
+    print(f"  {user_preference_text}")
+
     if parsed_preferences is not None:
-        print("\nParsed preferences from natural language:")
+        print("\nParsed preferences:")
         for key, value in parsed_preferences.items():
             print(f"  - {key}: {value}")
-    print("\nStudent preferences:")
+
+    print("\nPipeline-ready preferences:")
     for key, value in student_preferences.items():
         print(f"  - {key}: {value}")
 
-    print_recommendations(ranked_df, top_n=5)
+    print_recommendations(ranked_df, top_n=3)
 
 
 if __name__ == "__main__":

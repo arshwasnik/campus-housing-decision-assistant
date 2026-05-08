@@ -33,6 +33,7 @@ PRIORITY_KEYWORDS = {
     "space": ["space", "roomy", "spacious", "square feet", "bedroom", "bathroom"],
     "amenities": ["amenities", "parking", "laundry", "furnished", "gym", "wifi", "internet"],
     "safety": ["safe", "safety", "secure", "quiet", "well-lit", "well lit"],
+    "hidden_cost": ["hidden fees", "extra fees", "fees", "utilities", "deposit", "extra costs", "no hidden costs"],
 }
 
 
@@ -42,6 +43,7 @@ DEFAULT_WEIGHT_POINTS = {
     "space": 18,
     "amenities": 12,
     "safety": 10,
+    "hidden_cost": 6,
 }
 
 
@@ -91,6 +93,7 @@ def build_pipeline_preferences(parsed_preferences: dict[str, Any], default_prefe
         pipeline_preferences["priority_space_value"] = parsed_weights["space"]
         pipeline_preferences["priority_amenities"] = parsed_weights["amenities"]
         pipeline_preferences["priority_safety"] = parsed_weights["safety"]
+        pipeline_preferences["priority_hidden_cost"] = parsed_weights["hidden_cost"]
 
     return pipeline_preferences
 

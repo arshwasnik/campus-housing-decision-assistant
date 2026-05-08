@@ -1,16 +1,16 @@
 # Campus Housing Decision Assistant
 
-Campus Housing Decision Assistant is a data science focused project for comparing apartment listings near a college campus. The goal is to help students make better housing decisions using a transparent scoring algorithm, not a black-box recommendation system.
+Campus Housing Decision Assistant is a small, data-focused project for comparing apartment listings near a college campus. The goal is to help students reason through tradeoffs with a transparent scoring system instead of a black-box recommendation model.
 
-This Phase 1 version focuses on the core analytics pipeline:
+This prototype stays intentionally simple:
 
-- Load apartment listings from a CSV file
-- Clean messy housing data with Pandas
-- Engineer comparison features that matter to students
-- Rank listings using a weighted and explainable scoring method
-- Save results and visualizations for easy review
+- load a CSV of apartment listings
+- clean student-relevant housing fields
+- engineer a handful of comparison features
+- score listings using readable weighted rules
+- save ranked outputs and a few charts
 
-Future phases can add AI for natural language preference parsing, description extraction, and plain-English recommendation summaries, but the project already works without AI.
+There is no front end yet. The value of the project is the data pipeline and the explainable ranking logic.
 
 ## Project Structure
 
@@ -33,88 +33,197 @@ campus-housing-decision-assistant/
 |-- README.md
 ```
 
-## Dataset
+## Sample Dataset
 
-The project starts with a small sample CSV in [data/raw/sample_apartments.csv](/C:/Users/Arsh/Desktop/house-hunting-project/data/raw/sample_apartments.csv). It includes common apartment fields:
+The sample file at [data/raw/sample_apartments.csv](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/data/raw/sample_apartments.csv) now includes 36 realistic listings near a UT Austin style campus area.
+
+The dataset includes fields that matter to students:
 
 - `rent`
 - `bedrooms`
 - `bathrooms`
 - `square_feet`
+- `distance_to_campus_miles`
+- `commute_time_minutes`
+- `parking_included`
+- `laundry_included`
+- `utilities_included`
+- `furnished`
+- `pet_friendly`
+- `safety_rating`
+- `walkability_score`
+- `lease_length_months`
+- `hidden_fees_estimate`
+
+It also keeps:
+
+- `property_name`
 - `city`
 - `state`
 - `latitude`
 - `longitude`
 - `description`
 
-The sample data intentionally includes messy formats like `$1,650/mo`, `2 bd`, and `940 sqft` so the cleaning step is realistic.
+The sample values still include realistic formatting like `$1,650/mo`, `2 bd`, `940 sqft`, `0.7 mi`, and `8 min`, so the cleaning step has something to do.
 
-You can swap in a real dataset later by replacing the CSV and keeping the same column names.
+## Cleaning Logic
 
-## How The Scoring Works
+The pipeline standardizes the raw CSV into a predictable schema before ranking:
 
-The ranking system is fully transparent. Every listing gets component scores from `0` to `100`, then the final score is calculated with user-defined weights.
+- numeric text such as `$2,050`, `3 bd`, `1,100 sqft`, and `12 min` is converted to numbers
+- boolean-style text such as `Yes` and `No` is converted to `True` and `False`
+- city and state formatting is normalized
+- core missing numeric values are filled with medians
+- ratings and bounded fields are clipped to sensible ranges
+- if `distance_to_campus_miles` is missing, the pipeline can estimate distance from latitude and longitude
+- if `commute_time_minutes` is missing, the pipeline estimates commute from distance
 
-### Engineered Features
+The core data prep lives in [src/campus_housing_decision_assistant/pipeline.py](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/src/campus_housing_decision_assistant/pipeline.py).
 
-- `rent_per_person`: total rent divided by the number of people living there
-- `rent_per_bedroom`: total rent divided by bedrooms
-- `rent_per_square_foot`: total rent divided by square feet
-- `bathroom_ratio`: bathrooms per person
-- `space_per_person`: square feet per person
-- `affordability_score`: higher when a listing stays within the student budget
-- `commute_score`: higher when the estimated commute stays within the preferred limit
-- `comfort_score`: combines space per person, bathroom ratio, and bedroom fit
-- `amenity_score`: counts useful student-friendly amenities found in the description
-- `hidden_cost_risk_score`: flags likely extra expenses mentioned in the description
-- `overall_score`: weighted score minus a small hidden-cost penalty
+## Scoring System
 
-### Preferences Dictionary
+Every listing gets component scores from `0` to `100`, then those components are combined into one `overall_score`.
 
-Edit the preferences dictionary in [run_pipeline.py](/C:/Users/Arsh/Desktop/house-hunting-project/run_pipeline.py):
+### 1. Affordability
 
-```python
-student_preferences = {
-    "max_rent": 900,
-    "max_commute_minutes": 15,
-    "roommate_count": 1,
-    "priority_budget": 0.35,
-    "priority_commute": 0.25,
-    "priority_space": 0.15,
-    "priority_bathrooms": 0.15,
-    "priority_amenities": 0.10,
-}
+Affordability is based on `rent_per_person`:
+
+- `rent_per_person = rent / total_people`
+- listings at or below the student budget get `100`
+- listings above the budget fall off linearly until they reach `0`
+
+The default budget is controlled by `max_rent` in [run_pipeline.py](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/run_pipeline.py) through `DEFAULT_PREFERENCES`.
+
+### 2. Commute Convenience
+
+Commute convenience combines actual commute time and neighborhood walkability:
+
+```text
+commute_convenience_score =
+    0.75 * commute_time_score
+  + 0.25 * walkability_score
 ```
 
-`roommate_count` means the number of roommates besides the student. For example, `1` means the student plans to live with one roommate, so the apartment cost is split across `2` people.
+- `commute_time_score` rewards listings that stay within the preferred commute window
+- `walkability_score` gives a boost to apartments where daily errands and campus access are easier without a car
 
-### Overall Score Formula
+### 3. Space / Value
 
-The project normalizes the user priorities so they add up to `1.0`, then computes:
+This score combines room to live with what the student is paying for it:
+
+```text
+space_value_score =
+    0.40 * space_score
+  + 0.25 * value_score
+  + 0.20 * bathroom_score
+  + 0.15 * bedroom_fit_score
+```
+
+Where:
+
+- `space_score` comes from `space_per_person`
+- `value_score` rewards lower `rent_per_square_foot`
+- `bathroom_score` rewards better bathroom-to-person ratios
+- `bedroom_fit_score` checks whether the unit has enough bedrooms for the expected roommate setup
+
+### 4. Amenities
+
+Amenities are scored from explicit listing fields rather than inferred from description text:
+
+- parking
+- laundry
+- utilities included
+- furnished
+- pet friendly
+
+These are weighted so laundry and utilities matter more than nice-to-have extras:
+
+```text
+amenity_score =
+    0.15 * parking
+  + 0.25 * laundry
+  + 0.30 * utilities
+  + 0.20 * furnished
+  + 0.10 * pet_friendly
+```
+
+The score is then scaled to `0` to `100`.
+
+### 5. Safety
+
+Safety is mostly driven by the listing's `safety_rating`, with a small walkability contribution:
+
+```text
+safety_score =
+    0.85 * safety_rating_score
+  + 0.15 * walkability_score
+```
+
+This keeps safety separate from commute while still recognizing that highly walkable student areas can be easier to navigate day to day.
+
+### 6. Hidden Cost Risk
+
+Hidden cost risk looks at both move-in fees and likely recurring extra costs.
+
+First, the pipeline converts the fee estimate into a monthly burden:
+
+```text
+hidden_fees_monthly_per_person =
+    (hidden_fees_estimate / lease_length_months) / total_people
+```
+
+Then it combines:
+
+- `hidden_fee_burden_score`: higher when upfront fees are heavy after being spread across the lease
+- `extra_cost_exposure_score`: higher when utilities, parking, or laundry are not included
+
+```text
+hidden_cost_risk_score =
+    0.70 * hidden_fee_burden_score
+  + 0.30 * extra_cost_exposure_score
+```
+
+The final ranking uses `hidden_cost_score = 100 - hidden_cost_risk_score`, so lower risk improves the recommendation.
+
+## Overall Score Formula
+
+The default priorities live in [src/campus_housing_decision_assistant/config.py](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/src/campus_housing_decision_assistant/config.py). They are normalized so the weights add up to `1.0`, then the pipeline computes:
 
 ```text
 overall_score =
-    budget_weight * affordability_score
-  + commute_weight * commute_score
-  + space_weight * space_score
-  + bathroom_weight * bathroom_score
-  + amenity_weight * amenity_score
-  - hidden_cost_penalty_weight * hidden_cost_risk_score
+    affordability_weight * affordability_score
+  + commute_weight * commute_convenience_score
+  + space_value_weight * space_value_score
+  + amenities_weight * amenity_score
+  + safety_weight * safety_score
+  + hidden_cost_weight * hidden_cost_score
 ```
 
-This makes the recommendation logic easy to explain in an interview.
+That makes the logic easy to explain and easy to tune.
 
-## Visualizations
+## Default Preferences
 
-The pipeline creates three figures in [outputs/figures](/C:/Users/Arsh/Desktop/house-hunting-project/outputs/figures):
+The starting preferences are:
 
-- Rent per person vs. distance to campus
-- Top apartments by overall score
-- Score breakdown for the top 5 listings
+```python
+DEFAULT_PREFERENCES = {
+    "max_rent": 950,
+    "max_commute_minutes": 15,
+    "roommate_count": 1,
+    "priority_affordability": 0.30,
+    "priority_commute": 0.20,
+    "priority_space_value": 0.18,
+    "priority_amenities": 0.14,
+    "priority_safety": 0.12,
+    "priority_hidden_cost": 0.06,
+}
+```
+
+`roommate_count` means the number of roommates besides the student. A value of `1` means the apartment cost is split across `2` people.
 
 ## How To Run
 
-1. Install the dependencies:
+1. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
@@ -136,26 +245,17 @@ py run_pipeline.py
 
 Running the script saves:
 
-- [data/processed/cleaned_apartment_listings.csv](/C:/Users/Arsh/Desktop/house-hunting-project/data/processed/cleaned_apartment_listings.csv)
-- [data/processed/ranked_apartment_recommendations.csv](/C:/Users/Arsh/Desktop/house-hunting-project/data/processed/ranked_apartment_recommendations.csv)
-- Figures in [outputs/figures](/C:/Users/Arsh/Desktop/house-hunting-project/outputs/figures)
+- [data/processed/cleaned_apartment_listings.csv](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/data/processed/cleaned_apartment_listings.csv)
+- [data/processed/ranked_apartment_recommendations.csv](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/data/processed/ranked_apartment_recommendations.csv)
+- figures in [outputs/figures](/C:/Users/Arsh/Desktop/campus-housing-decision-assistant/outputs/figures)
 
-## Why This Is Good For Interviews
+## Why This Prototype Works
 
-This project is strong interview material because it shows:
+This version is still simple enough to discuss in an interview or build on later:
 
-- Data cleaning with Pandas
-- Feature engineering tied to a real user problem
-- Transparent scoring instead of black-box modeling
-- Clear assumptions and tradeoff analysis
-- Room to extend the project with AI later
+- the scoring is transparent
+- the features reflect actual student tradeoffs
+- the dataset is large enough to show interesting ranking behavior
+- the pipeline is easy to extend without needing a UI first
 
-## Phase 2 Ideas
-
-After Phase 1 is stable, the next steps could be:
-
-- Natural language preference parser
-- AI-based description feature extraction
-- Tradeoff explanation generator
-
-Those features should be layered on top of the existing pipeline rather than replacing it.
+Natural next steps could include preference parsing, explanation generation, or pulling real listings from a scraper or API, but the current prototype stands on its own as a clean analytics project.

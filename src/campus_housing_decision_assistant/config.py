@@ -9,14 +9,15 @@ FIGURES_DIR = OUTPUTS_DIR / "figures"
 
 
 DEFAULT_PREFERENCES = {
-    "max_rent": 900,
+    "max_rent": 950,
     "max_commute_minutes": 15,
     "roommate_count": 1,
-    "priority_budget": 0.35,
-    "priority_commute": 0.25,
-    "priority_space": 0.15,
-    "priority_bathrooms": 0.15,
-    "priority_amenities": 0.10,
+    "priority_affordability": 0.30,
+    "priority_commute": 0.20,
+    "priority_space_value": 0.18,
+    "priority_amenities": 0.14,
+    "priority_safety": 0.12,
+    "priority_hidden_cost": 0.06,
 }
 
 
@@ -25,29 +26,27 @@ SCORING_SETTINGS = {
     "campus_latitude": 30.2849,
     "campus_longitude": -97.7341,
     "average_commute_speed_mph": 18,
-    "space_score_floor": 120,
-    "space_score_ceiling": 350,
-    "bathroom_ratio_floor": 0.25,
-    "bathroom_ratio_ceiling": 0.75,
-    "hidden_cost_penalty_weight": 0.15,
-}
-
-
-AMENITY_KEYWORDS = {
-    "laundry": ["laundry", "washer", "dryer", "washer/dryer"],
-    "parking": ["parking", "garage", "bike storage"],
-    "furnished": ["furnished"],
-    "gym": ["gym", "fitness center"],
-    "study_space": ["study", "study room", "study lounge"],
-    "internet": ["internet", "wi-fi", "wifi"],
-    "utilities_included": ["utilities included", "all utilities", "water included"],
-}
-
-
-HIDDEN_COST_KEYWORDS = {
-    "utilities_extra": ["utilities not included", "tenant pays", "pays electricity", "pays gas"],
-    "application_fee": ["application fee", "admin fee"],
-    "parking_fee": ["parking fee", "reserved parking", "parking fee applies"],
-    "pet_fee": ["pet fee"],
-    "deposit": ["deposit"],
+    "space_score_floor": 180,
+    "space_score_ceiling": 550,
+    "bathroom_ratio_floor": 0.40,
+    "bathroom_ratio_ceiling": 1.00,
+    "bedroom_fit_floor": 0.40,
+    "bedroom_fit_ceiling": 1.00,
+    "value_price_target": 1.90,
+    "value_price_cutoff_multiplier": 2.00,
+    "safety_rating_floor": 3.00,
+    "safety_rating_ceiling": 4.80,
+    "hidden_fee_monthly_ceiling_per_person": 35,
+    "amenity_weights": {
+        "parking_included": 0.15,
+        "laundry_included": 0.25,
+        "utilities_included": 0.30,
+        "furnished": 0.20,
+        "pet_friendly": 0.10,
+    },
+    "hidden_cost_exposure_weights": {
+        "utilities_included": 0.55,
+        "parking_included": 0.25,
+        "laundry_included": 0.20,
+    },
 }
